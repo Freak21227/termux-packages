@@ -1,0 +1,1771 @@
+From 727e5d14e2c4b3aafb9731bd6e1e92cf917143af Mon Sep 17 00:00:00 2001
+From: Xtr126 <k.gunetilleke@gmail.com>
+Date: Tue, 1 Jul 2025 21:52:49 +0530
+Subject: [PATCH] Remove termux-gui from wlroots
+
+---
+ .../0003-impl-termux-gui-backend.patch        | 478 ------------------
+ x11-packages/wlroots/build.sh                 |   8 +-
+ .../wlroots/src/backend/termuxgui/allocator.c | 209 --------
+ .../wlroots/src/backend/termuxgui/backend.c   | 177 -------
+ .../wlroots/src/backend/termuxgui/input.c     | 241 ---------
+ .../wlroots/src/backend/termuxgui/meson.build |  15 -
+ .../wlroots/src/backend/termuxgui/output.c    | 308 -----------
+ .../wlroots/src/include/backend/termuxgui.h   | 210 --------
+ .../src/include/wlr/backend/termuxgui.h       |  31 --
+ 9 files changed, 2 insertions(+), 1675 deletions(-)
+ delete mode 100644 x11-packages/wlroots/0003-impl-termux-gui-backend.patch
+ delete mode 100644 x11-packages/wlroots/src/backend/termuxgui/allocator.c
+ delete mode 100644 x11-packages/wlroots/src/backend/termuxgui/backend.c
+ delete mode 100644 x11-packages/wlroots/src/backend/termuxgui/input.c
+ delete mode 100644 x11-packages/wlroots/src/backend/termuxgui/meson.build
+ delete mode 100644 x11-packages/wlroots/src/backend/termuxgui/output.c
+ delete mode 100644 x11-packages/wlroots/src/include/backend/termuxgui.h
+ delete mode 100644 x11-packages/wlroots/src/include/wlr/backend/termuxgui.h
+
+diff --git a/x11-packages/wlroots/0003-impl-termux-gui-backend.patch b/x11-packages/wlroots/0003-impl-termux-gui-backend.patch
+deleted file mode 100644
+index aea03ead42830e..00000000000000
+--- a/x11-packages/wlroots/0003-impl-termux-gui-backend.patch
++++ /dev/null
+@@ -1,478 +0,0 @@
+-diff --git a/backend/backend.c b/backend/backend.c
+-index e4e8c8d8..b9a04d4c 100644
+---- a/backend/backend.c
+-+++ b/backend/backend.c
+-@@ -36,6 +36,10 @@
+- #include <wlr/backend/x11.h>
+- #endif
+- 
+-+#if WLR_HAS_TERMUXGUI_BACKEND
+-+#include <wlr/backend/termuxgui.h>
+-+#endif
+-+
+- #define WAIT_SESSION_TIMEOUT 10000 // ms
+- 
+- void wlr_backend_init(struct wlr_backend *backend,
+-@@ -240,6 +244,25 @@ static struct wlr_backend *attempt_headless_backend(struct wl_event_loop *loop)
+- 	return backend;
+- }
+- 
+-+static struct wlr_backend *attempt_tgui_backend(struct wl_event_loop *loop) {
+-+#if WLR_HAS_TERMUXGUI_BACKEND
+-+	struct wlr_backend *backend = wlr_tgui_backend_create(loop);
+-+	if (backend == NULL) {
+-+		return NULL;
+-+	}
+-+
+-+	size_t outputs = parse_outputs_env("WLR_TGUI_OUTPUTS");
+-+	for (size_t i = 0; i < outputs; ++i) {
+-+		wlr_tgui_output_create(backend);
+-+	}
+-+
+-+	return backend;
+-+#else
+-+	wlr_log(WLR_ERROR, "Cannot create Termux:GUI backend: disabled at compile-time");
+-+	return NULL;
+-+#endif
+-+}
+-+
+- static struct wlr_backend *attempt_drm_backend(struct wlr_backend *backend, struct wlr_session *session) {
+- #if WLR_HAS_DRM_BACKEND
+- 	struct wlr_device *gpus[8];
+-@@ -305,6 +328,8 @@ static bool attempt_backend_by_name(struct wl_event_loop *loop,
+- 		backend = attempt_x11_backend(loop, NULL);
+- 	} else if (strcmp(name, "headless") == 0) {
+- 		backend = attempt_headless_backend(loop);
+-+	} else if (strcmp(name, "tgui") == 0) {
+-+		backend = attempt_tgui_backend(loop);
+- 	} else if (strcmp(name, "drm") == 0 || strcmp(name, "libinput") == 0) {
+- 		// DRM and libinput need a session
+- 		if (*session_ptr == NULL) {
+-@@ -401,6 +426,12 @@ struct wlr_backend *wlr_backend_autocreate(struct wl_event_loop *loop,
+- 		goto success;
+- 	}
+- 
+-+	struct wlr_backend *tgui_backend = attempt_tgui_backend(loop);
+-+	if (tgui_backend) {
+-+		wlr_multi_backend_add(multi, tgui_backend);
+-+		goto success;
+-+	}
+-+
+- 	// Attempt DRM+libinput
+- 	session = session_create_and_wait(loop);
+- 	if (!session) {
+-diff --git a/backend/meson.build b/backend/meson.build
+-index ed977d3b..6086492f 100644
+---- a/backend/meson.build
+-+++ b/backend/meson.build
+-@@ -1,6 +1,6 @@
+- wlr_files += files('backend.c')
+- 
+--all_backends = ['drm', 'libinput', 'x11']
+-+all_backends = ['drm', 'libinput', 'x11', 'termuxgui']
+- backends = get_option('backends')
+- if 'auto' in backends and get_option('auto_features').enabled()
+- 	backends = all_backends
+-diff --git a/include/meson.build b/include/meson.build
+-index 165166c3..a391fa82 100644
+---- a/include/meson.build
+-+++ b/include/meson.build
+-@@ -8,6 +8,9 @@ endif
+- if not features.get('libinput-backend')
+- 	exclude_files += 'backend/libinput.h'
+- endif
+-+if not features.get('termuxgui-backend')
+-+	exclude_files += 'backend/termuxgui.h'
+-+endif
+- if not features.get('x11-backend')
+- 	exclude_files += 'backend/x11.h'
+- endif
+-diff --git a/include/wlr/config.h.in b/include/wlr/config.h.in
+-index e03049da..a3d131fe 100644
+---- a/include/wlr/config.h.in
+-+++ b/include/wlr/config.h.in
+-@@ -4,6 +4,7 @@
+- #mesondefine WLR_HAS_DRM_BACKEND
+- #mesondefine WLR_HAS_LIBINPUT_BACKEND
+- #mesondefine WLR_HAS_X11_BACKEND
+-+#mesondefine WLR_HAS_TERMUXGUI_BACKEND
+- 
+- #mesondefine WLR_HAS_GLES2_RENDERER
+- #mesondefine WLR_HAS_VULKAN_RENDERER
+-diff --git a/meson.build b/meson.build
+-index c28bb772..095928c9 100644
+---- a/meson.build
+-+++ b/meson.build
+-@@ -89,6 +89,7 @@ features = {
+- 	'drm-backend': false,
+- 	'x11-backend': false,
+- 	'libinput-backend': false,
+-+	'termuxgui-backend': false,
+- 	'xwayland': false,
+- 	'gles2-renderer': false,
+- 	'vulkan-renderer': false,
+-diff --git a/meson_options.txt b/meson_options.txt
+-index 35961b10..a7480a55 100644
+---- a/meson_options.txt
+-+++ b/meson_options.txt
+-@@ -3,7 +3,7 @@ option('xwayland', type: 'feature', value: 'auto', yield: true, description: 'En
+- option('examples', type: 'boolean', value: true, description: 'Build example applications')
+- option('icon_directory', description: 'Location used to look for cursors (default: ${datadir}/icons)', type: 'string', value: '')
+- option('renderers', type: 'array', choices: ['auto', 'gles2', 'vulkan'], value: ['auto'], description: 'Select built-in renderers')
+--option('backends', type: 'array', choices: ['auto', 'drm', 'libinput', 'x11'], value: ['auto'], description: 'Select built-in backends')
+-+option('backends', type: 'array', choices: ['auto', 'drm', 'libinput', 'x11', 'termuxgui'], value: ['auto'], description: 'Select built-in backends')
+- option('allocators', type: 'array', choices: ['auto', 'gbm'], value: ['auto'],
+- 	description: 'Select built-in allocators')
+- option('session', type: 'feature', value: 'auto', description: 'Enable session support')
+-diff --git a/render/allocator/allocator.c b/render/allocator/allocator.c
+-index 27b08fc8..526ba2a7 100644
+---- a/render/allocator/allocator.c
+-+++ b/render/allocator/allocator.c
+-@@ -18,6 +18,11 @@
+- #include "render/allocator/gbm.h"
+- #endif
+- 
+-+#if WLR_HAS_TERMUXGUI_BACKEND
+-+#include "backend/multi.h"
+-+#include "backend/termuxgui.h"
+-+#endif
+-+
+- void wlr_allocator_init(struct wlr_allocator *alloc,
+- 		const struct wlr_allocator_interface *impl, uint32_t buffer_caps) {
+- 	assert(impl && impl->destroy && impl->create_buffer);
+-@@ -145,8 +150,31 @@ struct wlr_allocator *allocator_autocreate_with_drm_fd(
+- 	return NULL;
+- }
+- 
+-+#if WLR_HAS_TERMUXGUI_BACKEND
+-+static void backend_get_allocator(struct wlr_backend *backend, void *data) {
+-+	struct wlr_allocator **allocator = data;
+-+	if (wlr_backend_is_tgui(backend)) {
+-+		struct wlr_tgui_backend *tgui_backend = tgui_backend_from_backend(backend);
+-+		*allocator = wlr_tgui_backend_get_allocator(tgui_backend);
+-+	}
+-+}
+-+#endif
+-+
+- struct wlr_allocator *wlr_allocator_autocreate(struct wlr_backend *backend,
+- 		struct wlr_renderer *renderer) {
+-+#if WLR_HAS_TERMUXGUI_BACKEND
+-+	struct wlr_allocator *allocator = NULL;
+-+	if (wlr_backend_is_multi(backend)) {
+-+		wlr_multi_for_each_backend(backend, backend_get_allocator, &allocator);
+-+	} else {
+-+		backend_get_allocator(backend, &allocator);
+-+	}
+-+
+-+	if (allocator) {
+-+		return allocator;
+-+	}
+-+#endif
+-+
+- 	uint32_t backend_caps = backend_get_buffer_caps(backend);
+- 	// Note, drm_fd may be negative if unavailable
+- 	int drm_fd = wlr_backend_get_drm_fd(backend);
+-diff --git a/render/egl.c b/render/egl.c
+-index 19868ca8..a3bd8764 100644
+---- a/render/egl.c
+-+++ b/render/egl.c
+-@@ -296,6 +296,7 @@ static bool egl_init_display(struct wlr_egl *egl, EGLDisplay display) {
+- 		check_egl_ext(display_exts_str, "EGL_EXT_create_context_robustness");
+- 
+- 	const char *device_exts_str = NULL, *driver_name = NULL;
+-+#ifndef __TERMUX__
+- 	if (egl->exts.EXT_device_query) {
+- 		EGLAttrib device_attrib;
+- 		if (!egl->procs.eglQueryDisplayAttribEXT(egl->display,
+-@@ -335,6 +336,7 @@ static bool egl_init_display(struct wlr_egl *egl, EGLDisplay display) {
+- 		egl->exts.EXT_device_drm_render_node =
+- 			check_egl_ext(device_exts_str, "EGL_EXT_device_drm_render_node");
+- 	}
+-+#endif
+- 
+- 	if (!check_egl_ext(display_exts_str, "EGL_KHR_no_config_context") &&
+- 			!check_egl_ext(display_exts_str, "EGL_MESA_configless_context")) {
+-@@ -440,6 +442,7 @@ static bool egl_init(struct wlr_egl *egl, EGLenum platform,
+- 
+- static bool device_has_name(const drmDevice *device, const char *name);
+- 
+-+#ifndef __TERMUX__
+- static EGLDeviceEXT get_egl_device_from_drm_fd(struct wlr_egl *egl,
+- 		int drm_fd) {
+- 	if (egl->procs.eglQueryDevicesEXT == NULL) {
+-@@ -494,7 +497,9 @@ static EGLDeviceEXT get_egl_device_from_drm_fd(struct wlr_egl *egl,
+- 
+- 	return egl_device;
+- }
+-+#endif
+- 
+-+#ifndef __TERMUX__
+- static int open_render_node(int drm_fd) {
+- 	char *render_name = drmGetRenderDeviceNameFromFd(drm_fd);
+- 	if (render_name == NULL) {
+-@@ -516,6 +521,7 @@ static int open_render_node(int drm_fd) {
+- 	free(render_name);
+- 	return render_fd;
+- }
+-+#endif
+- 
+- struct wlr_egl *wlr_egl_create_with_drm_fd(int drm_fd) {
+- 	struct wlr_egl *egl = egl_create();
+-@@ -524,6 +530,7 @@ struct wlr_egl *wlr_egl_create_with_drm_fd(int drm_fd) {
+- 		return NULL;
+- 	}
+- 
+-+#ifndef __TERMUX__
+- 	if (egl->exts.EXT_platform_device) {
+- 		/*
+- 		 * Search for the EGL device matching the DRM fd using the
+-@@ -541,8 +548,10 @@ struct wlr_egl *wlr_egl_create_with_drm_fd(int drm_fd) {
+- 	} else {
+- 		wlr_log(WLR_DEBUG, "EXT_platform_device not supported");
+- 	}
+-+#endif
+- 
+- 	if (egl->exts.KHR_platform_gbm) {
+-+#ifndef __TERMUX__
+- 		int gbm_fd = open_render_node(drm_fd);
+- 		if (gbm_fd < 0) {
+- 			wlr_log(WLR_ERROR, "Failed to open DRM render node");
+-@@ -555,14 +564,19 @@ struct wlr_egl *wlr_egl_create_with_drm_fd(int drm_fd) {
+- 			wlr_log(WLR_ERROR, "Failed to create GBM device");
+- 			goto error;
+- 		}
+-+#endif
+- 
+- 		if (egl_init(egl, EGL_PLATFORM_GBM_KHR, egl->gbm_device)) {
+- 			wlr_log(WLR_DEBUG, "Using EGL_PLATFORM_GBM_KHR");
+- 			return egl;
+- 		}
+- 
+-+#ifndef __TERMUX__
+- 		gbm_device_destroy(egl->gbm_device);
+- 		close(gbm_fd);
+-+#else
+-+		goto error;
+-+#endif
+- 	} else {
+- 		wlr_log(WLR_DEBUG, "KHR_platform_gbm not supported");
+- 	}
+-diff --git a/render/vulkan/renderer.c b/render/vulkan/renderer.c
+-index 32effb5a..9dc91963 100644
+---- a/render/vulkan/renderer.c
+-+++ b/render/vulkan/renderer.c
+-@@ -2488,6 +2488,7 @@ struct wlr_renderer *wlr_vk_renderer_create_with_drm_fd(int drm_fd) {
+- 		return NULL;
+- 	}
+- 
+-+#ifndef __TERMUX__
+- 	// Do not use the drm_fd that was passed in: we should prefer the render
+- 	// node even if a primary node was provided
+- 	dev->drm_fd = vulkan_open_phdev_drm_fd(phdev);
+-@@ -2496,6 +2497,7 @@ struct wlr_renderer *wlr_vk_renderer_create_with_drm_fd(int drm_fd) {
+- 		vulkan_instance_destroy(ini);
+- 		return NULL;
+- 	}
+-+#endif
+- 
+- 	return vulkan_renderer_create_for_device(dev);
+- }
+-diff --git a/render/vulkan/vulkan.c b/render/vulkan/vulkan.c
+-index 7cdc44a0..ca700b48 100644
+---- a/render/vulkan/vulkan.c
+-+++ b/render/vulkan/vulkan.c
+-@@ -273,11 +273,13 @@ VkPhysicalDevice vulkan_find_drm_phdev(struct wlr_vk_instance *ini, int drm_fd)
+- 		return VK_NULL_HANDLE;
+- 	}
+- 
+-+#ifndef __TERMUX__
+- 	struct stat drm_stat = {0};
+- 	if (fstat(drm_fd, &drm_stat) != 0) {
+- 		wlr_log_errno(WLR_ERROR, "fstat failed");
+- 		return VK_NULL_HANDLE;
+- 	}
+-+#endif
+- 
+- 	for (uint32_t i = 0; i < num_phdevs; ++i) {
+- 		VkPhysicalDevice phdev = phdevs[i];
+-@@ -313,6 +315,7 @@ VkPhysicalDevice vulkan_find_drm_phdev(struct wlr_vk_instance *ini, int drm_fd)
+- 			continue;
+- 		}
+- 
+-+#ifndef __TERMUX__
+- 		bool has_drm_props = check_extension(avail_ext_props, avail_extc,
+- 			VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME);
+- 		bool has_driver_props = check_extension(avail_ext_props, avail_extc,
+-@@ -359,11 +362,18 @@ VkPhysicalDevice vulkan_find_drm_phdev(struct wlr_vk_instance *ini, int drm_fd)
+- 				phdev_props.deviceName);
+- 			return phdev;
+- 		}
+-+#else
+-+		if (check_extension(avail_ext_props, avail_extc, VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) &&
+-+				check_extension(avail_ext_props, avail_extc, VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME)) {
+-+			return phdev;
+-+		}
+-+#endif
+- 	}
+- 
+- 	return VK_NULL_HANDLE;
+- }
+- 
+-+#ifndef __TERMUX__
+- int vulkan_open_phdev_drm_fd(VkPhysicalDevice phdev) {
+- 	// vulkan_find_drm_phdev() already checks that VK_EXT_physical_device_drm
+- 	// is supported
+-@@ -409,6 +419,7 @@ int vulkan_open_phdev_drm_fd(VkPhysicalDevice phdev) {
+- 	drmFreeDevice(&device);
+- 	return drm_fd;
+- }
+-+#endif
+- 
+- static void load_device_proc(struct wlr_vk_device *dev, const char *name,
+- 		void *proc_ptr) {
+-diff --git a/render/wlr_renderer.c b/render/wlr_renderer.c
+-index 6a28908c..0f017e4c 100644
+---- a/render/wlr_renderer.c
+-+++ b/render/wlr_renderer.c
+-@@ -6,7 +6,9 @@
+- #include <wlr/render/interface.h>
+- #include <wlr/render/pixman.h>
+- #include <wlr/render/wlr_renderer.h>
+-+#ifndef __TERMUX__
+- #include <wlr/types/wlr_drm.h>
+-+#endif
+- #include <wlr/types/wlr_linux_dmabuf_v1.h>
+- #include <wlr/types/wlr_shm.h>
+- #include <wlr/util/box.h>
+-@@ -83,7 +85,9 @@ bool wlr_renderer_init_wl_display(struct wlr_renderer *r,
+- 	}
+- 
+- 	if (wlr_renderer_get_texture_formats(r, WLR_BUFFER_CAP_DMABUF) != NULL &&
+-+#ifndef __TERMUX__
+- 			wlr_renderer_get_drm_fd(r) >= 0 &&
+-+#endif
+- 			wlr_linux_dmabuf_v1_create_with_renderer(wl_display, 4, r) == NULL) {
+- 		return false;
+- 	}
+-@@ -91,6 +95,7 @@ bool wlr_renderer_init_wl_display(struct wlr_renderer *r,
+- 	return true;
+- }
+- 
+-+#ifndef __TERMUX__
+- static int open_drm_render_node(void) {
+- 	uint32_t flags = 0;
+- 	int devices_len = drmGetDevices2(flags, NULL, 0);
+-@@ -136,9 +141,11 @@ out:
+- 
+- 	return fd;
+- }
+-+#endif
+- 
+- static bool open_preferred_drm_fd(struct wlr_backend *backend, int *drm_fd_ptr,
+- 		bool *own_drm_fd) {
+-+#ifndef __TERMUX__
+- 	if (*drm_fd_ptr >= 0) {
+- 		return true;
+- 	}
+-@@ -186,6 +193,9 @@ static bool open_preferred_drm_fd(struct wlr_backend *backend, int *drm_fd_ptr,
+- 	}
+- 
+- 	return false;
+-+#else
+-+	return true;
+-+#endif
+- }
+- 
+- static void log_creation_failure(bool is_auto, const char *msg) {
+-diff --git a/types/wlr_linux_dmabuf_v1.c b/types/wlr_linux_dmabuf_v1.c
+-index bfd97637..62aef5d2 100644
+---- a/types/wlr_linux_dmabuf_v1.c
+-+++ b/types/wlr_linux_dmabuf_v1.c
+-@@ -890,13 +890,16 @@ static bool set_default_feedback(struct wlr_linux_dmabuf_v1 *linux_dmabuf,
+- 		return false;
+- 	}
+- 
+-+#ifndef __TERMUX__
+- 	drmDevice *device = NULL;
+- 	if (drmGetDeviceFromDevId(feedback->main_device, 0, &device) != 0) {
+- 		wlr_log_errno(WLR_ERROR, "drmGetDeviceFromDevId failed");
+- 		goto error_compiled;
+- 	}
+-+#endif
+- 
+- 	int main_device_fd = -1;
+-+#ifndef __TERMUX__
+- 	if (device->available_nodes & (1 << DRM_NODE_RENDER)) {
+- 		const char *name = device->nodes[DRM_NODE_RENDER];
+- 		main_device_fd = open(name, O_RDWR | O_CLOEXEC);
+-@@ -914,6 +917,7 @@ static bool set_default_feedback(struct wlr_linux_dmabuf_v1 *linux_dmabuf,
+- 			"skipping DMA-BUF import checks", device->nodes[DRM_NODE_PRIMARY]);
+- 		drmFreeDevice(&device);
+- 	}
+-+#endif
+- 
+- 	size_t tranches_len =
+- 		feedback->tranches.size / sizeof(struct wlr_linux_dmabuf_feedback_v1_tranche);
+-@@ -942,8 +946,10 @@ static bool set_default_feedback(struct wlr_linux_dmabuf_v1 *linux_dmabuf,
+- 
+- error_formats:
+- 	wlr_drm_format_set_finish(&formats);
+-+#ifndef __TERMUX__
+- error_compiled:
+- 	compiled_feedback_destroy(compiled);
+-+#endif
+- 	return false;
+- }
+- 
+-@@ -1060,6 +1066,7 @@ void wlr_linux_dmabuf_feedback_v1_finish(struct wlr_linux_dmabuf_feedback_v1 *fe
+- 	wl_array_release(&feedback->tranches);
+- }
+- 
+-+#ifndef __TERMUX__
+- static bool devid_from_fd(int fd, dev_t *devid) {
+- 	struct stat stat;
+- 	if (fstat(fd, &stat) != 0) {
+-@@ -1069,6 +1076,7 @@ static bool devid_from_fd(int fd, dev_t *devid) {
+- 	*devid = stat.st_rdev;
+- 	return true;
+- }
+-+#endif
+- 
+- static bool is_secondary_drm_backend(struct wlr_backend *backend) {
+- #if WLR_HAS_DRM_BACKEND
+-@@ -1087,6 +1095,7 @@ bool wlr_linux_dmabuf_feedback_v1_init_with_options(struct wlr_linux_dmabuf_feed
+- 
+- 	*feedback = (struct wlr_linux_dmabuf_feedback_v1){0};
+- 
+-+#ifndef __TERMUX__
+- 	int renderer_drm_fd = wlr_renderer_get_drm_fd(options->main_renderer);
+- 	if (renderer_drm_fd < 0) {
+- 		wlr_log(WLR_ERROR, "Failed to get renderer DRM FD");
+-@@ -1096,6 +1105,9 @@ bool wlr_linux_dmabuf_feedback_v1_init_with_options(struct wlr_linux_dmabuf_feed
+- 	if (!devid_from_fd(renderer_drm_fd, &renderer_dev)) {
+- 		goto error;
+- 	}
+-+#else
+-+	dev_t renderer_dev = -1;
+-+#endif
+- 
+- 	feedback->main_device = renderer_dev;
+- 
+-@@ -1123,6 +1135,7 @@ bool wlr_linux_dmabuf_feedback_v1_init_with_options(struct wlr_linux_dmabuf_feed
+- 		}
+- 	} else if (options->scanout_primary_output != NULL &&
+- 			!is_secondary_drm_backend(options->scanout_primary_output->backend)) {
+-+#ifndef __TERMUX__
+- 		int backend_drm_fd = wlr_backend_get_drm_fd(options->scanout_primary_output->backend);
+- 		if (backend_drm_fd < 0) {
+- 			wlr_log(WLR_ERROR, "Failed to get backend DRM FD");
+-@@ -1132,6 +1145,9 @@ bool wlr_linux_dmabuf_feedback_v1_init_with_options(struct wlr_linux_dmabuf_feed
+- 		if (!devid_from_fd(backend_drm_fd, &backend_dev)) {
+- 			goto error;
+- 		}
+-+#else
+-+		dev_t backend_dev = -1;
+-+#endif
+- 
+- 		const struct wlr_drm_format_set *scanout_formats =
+- 			wlr_output_get_primary_formats(options->scanout_primary_output, WLR_BUFFER_CAP_DMABUF);
+diff --git a/x11-packages/wlroots/build.sh b/x11-packages/wlroots/build.sh
+index 22923ecf0bb7c2..ee6938933d6962 100644
+--- a/x11-packages/wlroots/build.sh
++++ b/x11-packages/wlroots/build.sh
+@@ -6,7 +6,7 @@ TERMUX_PKG_VERSION="0.18.2"
+ TERMUX_PKG_SRCURL=https://gitlab.freedesktop.org/wlroots/wlroots/-/archive/${TERMUX_PKG_VERSION}/wlroots-${TERMUX_PKG_VERSION}.tar.bz2
+ TERMUX_PKG_SHA256=a28061f7778f28f7be377fd4d6f0ebd58cb2a63b52460e9fde28e2ab43e80cab
+ TERMUX_PKG_AUTO_UPDATE=true
+-TERMUX_PKG_DEPENDS="libdrm, libglvnd, libpixman, libwayland, libxcb, libxkbcommon, xcb-util-renderutil, xcb-util-wm, termux-gui-c"
++TERMUX_PKG_DEPENDS="libdrm, libglvnd, libpixman, libwayland, libxcb, libxkbcommon, xcb-util-renderutil, xcb-util-wm"
+ TERMUX_PKG_BUILD_DEPENDS="libglvnd-dev, libwayland-cross-scanner, libwayland-protocols, xwayland"
+ TERMUX_PKG_RECOMMENDS="xwayland"
+ TERMUX_PKG_BREAKS="sway (<< 1.10 )"
+@@ -14,14 +14,10 @@ TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
+ -Dexamples=false
+ -Dxwayland=enabled
+ -Dsession=disabled
+--Dbackends=x11,termuxgui
++-Dbackends=x11
+ -Drenderers=gles2,vulkan
+ "
+ 
+-termux_step_post_get_source() {
+-	cp -r $TERMUX_PKG_BUILDER_DIR/src/* $TERMUX_PKG_SRCDIR/
+-}
+-
+ termux_step_pre_configure() {
+ 	termux_setup_wayland_cross_pkg_config_wrapper
+ 
+diff --git a/x11-packages/wlroots/src/backend/termuxgui/allocator.c b/x11-packages/wlroots/src/backend/termuxgui/allocator.c
+deleted file mode 100644
+index c25d157ebae57b..00000000000000
+--- a/x11-packages/wlroots/src/backend/termuxgui/allocator.c
++++ /dev/null
+@@ -1,209 +0,0 @@
+-#include <assert.h>
+-#include <dlfcn.h>
+-#include <fcntl.h>
+-#include <malloc.h>
+-#include <pthread.h>
+-#include <unistd.h>
+-
+-#include <drm_fourcc.h>
+-
+-#include "backend/termuxgui.h"
+-#include "render/drm_format_set.h"
+-#include "render/pixel_format.h"
+-
+-static const struct wlr_buffer_impl buffer_impl;
+-static const struct wlr_allocator_interface allocator_impl;
+-
+-struct wlr_tgui_buffer *tgui_buffer_from_buffer(struct wlr_buffer *wlr_buffer) {
+-    assert(wlr_buffer->impl == &buffer_impl);
+-    struct wlr_tgui_buffer *buffer = wl_container_of(wlr_buffer, buffer, wlr_buffer);
+-    return buffer;
+-}
+-
+-static struct wlr_tgui_allocator *
+-tgui_allocator_from_allocator(struct wlr_allocator *wlr_allocator) {
+-    assert(wlr_allocator->impl == &allocator_impl);
+-    struct wlr_tgui_allocator *alloc = wl_container_of(wlr_allocator, alloc, wlr_allocator);
+-    return alloc;
+-}
+-
+-static void buffer_destroy(struct wlr_buffer *wlr_buffer) {
+-    struct wlr_tgui_buffer *buffer = tgui_buffer_from_buffer(wlr_buffer);
+-    if (buffer->data) {
+-        buffer->unlock(buffer->buffer.buffer, NULL);
+-    }
+-
+-    wlr_dmabuf_attributes_finish(&buffer->dmabuf);
+-    tgui_hardware_buffer_destroy(buffer->conn, &buffer->buffer);
+-    dlclose(buffer->dlhandle);
+-    free(buffer);
+-}
+-
+-static bool buffer_get_dmabuf(struct wlr_buffer *wlr_buffer,
+-                              struct wlr_dmabuf_attributes *dmabuf) {
+-    struct wlr_tgui_buffer *buffer = tgui_buffer_from_buffer(wlr_buffer);
+-    memcpy(dmabuf, &buffer->dmabuf, sizeof(*dmabuf));
+-    return true;
+-}
+-
+-static bool begin_data_ptr_access(struct wlr_buffer *wlr_buffer,
+-                                  uint32_t flags,
+-                                  void **data,
+-                                  uint32_t *format,
+-                                  size_t *stride) {
+-    struct wlr_tgui_buffer *buffer = tgui_buffer_from_buffer(wlr_buffer);
+-
+-    if (buffer->data == NULL) {
+-        buffer->lock(buffer->buffer.buffer,
+-                     AHARDWAREBUFFER_USAGE_CPU_READ_RARELY |
+-                         AHARDWAREBUFFER_USAGE_CPU_WRITE_RARELY,
+-                     -1, NULL, &buffer->data);
+-        if (buffer->data == NULL) {
+-            wlr_log(WLR_ERROR, "AHardwareBuffer_lock failed");
+-            return false;
+-        }
+-    }
+-
+-    *data = buffer->data;
+-    *format = buffer->format;
+-    *stride = buffer->desc.stride * 4;
+-    return true;
+-}
+-
+-static void end_data_ptr_access(struct wlr_buffer *wlr_buffer) {
+-    struct wlr_tgui_buffer *buffer = tgui_buffer_from_buffer(wlr_buffer);
+-    if (buffer->data) {
+-        buffer->unlock(buffer->buffer.buffer, NULL);
+-        buffer->data = NULL;
+-    }
+-}
+-
+-static const struct wlr_buffer_impl buffer_impl = {
+-    .destroy = buffer_destroy,
+-    .get_dmabuf = buffer_get_dmabuf,
+-    .begin_data_ptr_access = begin_data_ptr_access,
+-    .end_data_ptr_access = end_data_ptr_access,
+-};
+-
+-static bool tgui_buffer_ahb_func_load(struct wlr_tgui_buffer *buffer) {
+-    buffer->dlhandle = dlopen("libandroid.so", RTLD_NOW);
+-    if (!buffer->dlhandle) {
+-        wlr_log(WLR_ERROR, "%s", dlerror());
+-        return false;
+-    }
+-
+-#define LOAD_SYM(name)                                                                           \
+-    if ((buffer->name = dlsym(buffer->dlhandle, "AHardwareBuffer_" #name)) == NULL) {            \
+-        wlr_log(WLR_ERROR, "%s", dlerror());                                                     \
+-        dlclose(buffer->dlhandle);                                                               \
+-        return false;                                                                            \
+-    }
+-
+-    LOAD_SYM(lock)
+-    LOAD_SYM(unlock)
+-    LOAD_SYM(describe)
+-    LOAD_SYM(getNativeHandle)
+-#undef LOAD_SYM
+-    return true;
+-}
+-
+-static struct wlr_buffer *allocator_create_buffer(struct wlr_allocator *wlr_allocator,
+-                                                  int width,
+-                                                  int height,
+-                                                  const struct wlr_drm_format *format) {
+-    struct wlr_tgui_allocator *alloc = tgui_allocator_from_allocator(wlr_allocator);
+-
+-    if (!wlr_drm_format_has(format, DRM_FORMAT_MOD_INVALID) &&
+-        !wlr_drm_format_has(format, DRM_FORMAT_MOD_LINEAR)) {
+-        wlr_log(WLR_ERROR, "TGUI allocator only supports INVALID and "
+-                           "LINEAR modifiers");
+-        return NULL;
+-    }
+-
+-    const struct wlr_pixel_format_info *info = drm_get_pixel_format_info(format->format);
+-    if (info == NULL) {
+-        wlr_log(WLR_ERROR, "Unsupported pixel format 0x%" PRIX32, format->format);
+-        return NULL;
+-    }
+-
+-    struct wlr_tgui_buffer *buffer = calloc(1, sizeof(*buffer));
+-    if (buffer == NULL) {
+-        return NULL;
+-    }
+-    wlr_buffer_init(&buffer->wlr_buffer, &buffer_impl, width, height);
+-
+-    if (!tgui_buffer_ahb_func_load(buffer)) {
+-        free(buffer);
+-        return NULL;
+-    }
+-
+-    tgui_err ret = tgui_hardware_buffer_create(
+-        alloc->conn, &buffer->buffer, TGUI_HARDWARE_BUFFER_FORMAT_RGBA8888, width, height,
+-        TGUI_HARDWARE_BUFFER_CPU_OFTEN, TGUI_HARDWARE_BUFFER_CPU_OFTEN);
+-    if (ret != TGUI_ERR_OK) {
+-        wlr_log(WLR_ERROR, "Failed to create tgui_hardware_buffer");
+-        goto fail;
+-    }
+-    wlr_log(WLR_DEBUG, "Created tgui_hardware_buffer %dx%d", width, height);
+-
+-    buffer->describe(buffer->buffer.buffer, &buffer->desc);
+-
+-    const native_handle_t *handle = buffer->getNativeHandle(buffer->buffer.buffer);
+-
+-    int fd = -1;
+-    for (int i = 0; i < handle->numFds; i++) {
+-        size_t size = lseek(handle->data[i], 0, SEEK_END);
+-        if (size < (buffer->desc.stride * buffer->desc.height * 4))
+-            continue;
+-
+-        fd = fcntl(handle->data[i], F_DUPFD_CLOEXEC, 0);
+-        break;
+-    }
+-
+-    if (fd < 0) {
+-        wlr_log(WLR_ERROR, "Failed to get dmabuf");
+-        tgui_hardware_buffer_destroy(alloc->conn, &buffer->buffer);
+-        goto fail;
+-    }
+-
+-    buffer->dmabuf = (struct wlr_dmabuf_attributes) {
+-        .width = buffer->desc.stride,
+-        .height = buffer->desc.height,
+-        .n_planes = 1,
+-        .format = format->format,
+-        .modifier = DRM_FORMAT_MOD_LINEAR,
+-        .offset[0] = 0,
+-        .stride[0] = buffer->desc.stride * 4,
+-        .fd[0] = fd,
+-
+-    };
+-
+-    buffer->format = format->format;
+-    buffer->conn = alloc->conn;
+-    return &buffer->wlr_buffer;
+-
+-fail:
+-    dlclose(buffer->dlhandle);
+-    free(buffer);
+-    return NULL;
+-}
+-
+-static void allocator_destroy(struct wlr_allocator *wlr_allocator) { free(wlr_allocator); }
+-
+-static const struct wlr_allocator_interface allocator_impl = {
+-    .destroy = allocator_destroy,
+-    .create_buffer = allocator_create_buffer,
+-};
+-
+-struct wlr_allocator *wlr_tgui_allocator_create(struct wlr_tgui_backend *backend) {
+-    struct wlr_tgui_allocator *allocator = calloc(1, sizeof(*allocator));
+-    if (allocator == NULL) {
+-        return NULL;
+-    }
+-    allocator->conn = backend->conn;
+-
+-    wlr_allocator_init(&allocator->wlr_allocator, &allocator_impl,
+-                       WLR_BUFFER_CAP_DMABUF | WLR_BUFFER_CAP_DATA_PTR);
+-
+-    return &allocator->wlr_allocator;
+-}
+diff --git a/x11-packages/wlroots/src/backend/termuxgui/backend.c b/x11-packages/wlroots/src/backend/termuxgui/backend.c
+deleted file mode 100644
+index 41dda3d2d5c9a1..00000000000000
+--- a/x11-packages/wlroots/src/backend/termuxgui/backend.c
++++ /dev/null
+@@ -1,177 +0,0 @@
+-#include <assert.h>
+-#include <pthread.h>
+-#include <stdlib.h>
+-#include <sys/eventfd.h>
+-#include <unistd.h>
+-
+-#include "backend/termuxgui.h"
+-
+-struct wlr_tgui_backend *tgui_backend_from_backend(struct wlr_backend *wlr_backend) {
+-    assert(wlr_backend_is_tgui(wlr_backend));
+-    return (struct wlr_tgui_backend *) wlr_backend;
+-}
+-
+-static bool backend_start(struct wlr_backend *wlr_backend) {
+-    struct wlr_tgui_backend *backend = tgui_backend_from_backend(wlr_backend);
+-    backend->started = true;
+-    wlr_log(WLR_INFO, "Starting Termux:GUI backend");
+-
+-    wl_signal_emit_mutable(&backend->backend.events.new_input, &backend->keyboard.base);
+-    wl_signal_emit_mutable(&backend->backend.events.new_input, &backend->pointer.base);
+-
+-    for (uint32_t i = 0; i < backend->requested_outputs; i++) {
+-        wlr_tgui_output_create(&backend->backend);
+-    }
+-    return true;
+-}
+-
+-static void backend_destroy(struct wlr_backend *wlr_backend) {
+-    struct wlr_tgui_backend *backend = tgui_backend_from_backend(wlr_backend);
+-    if (!wlr_backend) {
+-        return;
+-    }
+-
+-    wl_list_remove(&backend->event_loop_destroy.link);
+-    wl_event_source_remove(backend->tgui_event_source);
+-
+-    struct wlr_tgui_output *output, *output_tmp;
+-    wl_list_for_each_safe(output, output_tmp, &backend->outputs, link) {
+-        wlr_output_destroy(&output->wlr_output);
+-    }
+-
+-    wlr_allocator_destroy(backend->allocator);
+-    wlr_pointer_finish(&backend->pointer);
+-    wlr_keyboard_finish(&backend->keyboard);
+-    wlr_backend_finish(wlr_backend);
+-
+-    tgui_connection_destroy(backend->conn);
+-    pthread_join(backend->tgui_event_thread, NULL);
+-    wlr_queue_destroy(&backend->event_queue);
+-
+-    close(backend->tgui_event_fd);
+-    free(backend);
+-}
+-
+-static uint32_t get_buffer_caps(struct wlr_backend *wlr_backend) {
+-    return WLR_BUFFER_CAP_DATA_PTR | WLR_BUFFER_CAP_DMABUF;
+-}
+-
+-static const struct wlr_backend_impl backend_impl = {
+-    .start = backend_start,
+-    .destroy = backend_destroy,
+-    .get_buffer_caps = get_buffer_caps,
+-};
+-
+-static void handle_event_loop_destroy(struct wl_listener *listener, void *data) {
+-    struct wlr_tgui_backend *backend = wl_container_of(listener, backend, event_loop_destroy);
+-    backend_destroy(&backend->backend);
+-}
+-
+-static int handle_tgui_event(int fd, uint32_t mask, void *data) {
+-    struct wlr_tgui_backend *backend = data;
+-
+-    if ((mask & WL_EVENT_HANGUP) || (mask & WL_EVENT_ERROR)) {
+-        if (mask & WL_EVENT_ERROR) {
+-            wlr_log(WLR_ERROR, "Failed to read from tgui event");
+-            wlr_backend_destroy(&backend->backend);
+-        }
+-        return 0;
+-    }
+-
+-    eventfd_t event_count = 0;
+-    if (eventfd_read(backend->tgui_event_fd, &event_count) < 0) {
+-        return 0;
+-    }
+-
+-    struct wl_list *elm = wlr_queue_pull(&backend->event_queue, true);
+-    if (elm == NULL) {
+-        wlr_log(WLR_ERROR, "tgui event queue is empty");
+-        return 0;
+-    }
+-    struct wlr_tgui_event *event = wl_container_of(elm, event, link);
+-
+-    struct wlr_tgui_output *output, *output_tmp;
+-    wl_list_for_each_safe(output, output_tmp, &backend->outputs, link) {
+-        if (event->e.activity == output->activity) {
+-            handle_activity_event(&event->e, output);
+-        }
+-    }
+-    tgui_event_destroy(&event->e);
+-    free(event);
+-
+-    return 0;
+-}
+-
+-static void *tgui_event_thread(void *data) {
+-    struct wlr_tgui_backend *backend = data;
+-
+-    tgui_event event;
+-    while (tgui_wait_event(backend->conn, &event) == TGUI_ERR_OK) {
+-        struct wlr_tgui_event *wlr_event = calloc(1, sizeof(*wlr_event));
+-        if (wlr_event) {
+-            memcpy(&wlr_event->e, &event, sizeof(tgui_event));
+-
+-            wlr_queue_push(&backend->event_queue, &wlr_event->link);
+-
+-            eventfd_write(backend->tgui_event_fd, 1);
+-        } else {
+-            wlr_log(WLR_ERROR, "tgui event loss: out of memory");
+-            tgui_event_destroy(&event);
+-        }
+-    }
+-
+-    return 0;
+-}
+-
+-const struct wlr_pointer_impl tgui_pointer_impl = {
+-    .name = "tgui-pointer",
+-};
+-
+-const struct wlr_keyboard_impl tgui_keyboard_impl = {
+-    .name = "tgui-keyboard",
+-};
+-
+-struct wlr_backend *wlr_tgui_backend_create(struct wl_event_loop *loop) {
+-    wlr_log(WLR_INFO, "Creating Termux:GUI backend");
+-
+-    struct wlr_tgui_backend *backend = calloc(1, sizeof(*backend));
+-    if (!backend) {
+-        wlr_log(WLR_ERROR, "Failed to allocate wlr_tgui_backend");
+-        return NULL;
+-    }
+-    wlr_backend_init(&backend->backend, &backend_impl);
+-
+-    backend->loop = loop;
+-    backend->tgui_event_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE);
+-
+-    if (tgui_connection_create(&backend->conn)) {
+-        wlr_log(WLR_ERROR, "Failed to create tgui_connection");
+-        wlr_backend_finish(&backend->backend);
+-        free(backend);
+-        return NULL;
+-    }
+-    backend->allocator = wlr_tgui_allocator_create(backend);
+-
+-    wlr_pointer_init(&backend->pointer, &tgui_pointer_impl, "tgui-pointer");
+-    wlr_keyboard_init(&backend->keyboard, &tgui_keyboard_impl, "tgui-keyboard");
+-
+-    wl_list_init(&backend->outputs);
+-
+-    backend->event_loop_destroy.notify = handle_event_loop_destroy;
+-    wl_event_loop_add_destroy_listener(loop, &backend->event_loop_destroy);
+-
+-    uint32_t events = WL_EVENT_READABLE | WL_EVENT_ERROR | WL_EVENT_HANGUP;
+-    backend->tgui_event_source = wl_event_loop_add_fd(backend->loop, backend->tgui_event_fd,
+-                                                      events, handle_tgui_event, backend);
+-
+-    wlr_queue_init(&backend->event_queue);
+-    pthread_create(&backend->tgui_event_thread, NULL, tgui_event_thread, backend);
+-
+-    return &backend->backend;
+-}
+-
+-struct wlr_allocator *wlr_tgui_backend_get_allocator(struct wlr_tgui_backend *backend) {
+-    return backend->allocator;
+-}
+-
+-bool wlr_backend_is_tgui(struct wlr_backend *backend) { return backend->impl == &backend_impl; }
+diff --git a/x11-packages/wlroots/src/backend/termuxgui/input.c b/x11-packages/wlroots/src/backend/termuxgui/input.c
+deleted file mode 100644
+index 3125fe0d6bff02..00000000000000
+--- a/x11-packages/wlroots/src/backend/termuxgui/input.c
++++ /dev/null
+@@ -1,241 +0,0 @@
+-#include <android/keycodes.h>
+-#include <linux/input-event-codes.h>
+-#include <xkbcommon/xkbcommon.h>
+-
+-#include "backend/termuxgui.h"
+-
+-static void
+-send_pointer_position(struct wlr_tgui_output *output, double x, double y, uint32_t time_ms) {
+-    struct wlr_pointer_motion_absolute_event ev = {
+-        .pointer = &output->backend->pointer,
+-        .time_msec = time_ms,
+-        .x = x,
+-        .y = y,
+-    };
+-    wl_signal_emit_mutable(&output->backend->pointer.events.motion_absolute, &ev);
+-    wl_signal_emit_mutable(&output->backend->pointer.events.frame, &output->backend->pointer);
+-}
+-
+-static void send_pointer_button(struct wlr_tgui_output *output,
+-                                uint32_t button,
+-                                enum wl_pointer_button_state state,
+-                                uint32_t time_ms) {
+-    struct wlr_pointer_button_event ev = {
+-        .pointer = &output->backend->pointer,
+-        .time_msec = time_ms,
+-        .button = button,
+-        .state = state,
+-    };
+-    wl_signal_emit_mutable(&output->backend->pointer.events.button, &ev);
+-    wl_signal_emit_mutable(&output->backend->pointer.events.frame, &output->backend->pointer);
+-}
+-
+-static void send_pointer_axis(struct wlr_tgui_output *output, int32_t delta, uint64_t time_ms) {
+-    struct wlr_pointer_axis_event ev = {
+-        .pointer = &output->backend->pointer,
+-        .time_msec = time_ms,
+-        .source = WL_POINTER_AXIS_SOURCE_WHEEL,
+-        .orientation = WL_POINTER_AXIS_VERTICAL_SCROLL,
+-        .delta = delta * 15,
+-        .delta_discrete = delta * WLR_POINTER_AXIS_DISCRETE_STEP,
+-    };
+-    wl_signal_emit_mutable(&output->backend->pointer.events.axis, &ev);
+-    wl_signal_emit_mutable(&output->backend->pointer.events.frame, &output->backend->pointer);
+-}
+-
+-static void move_cursor(struct wlr_tgui_output *output, double dx, double dy, uint32_t time_ms) {
+-    output->cursor_x -= dx;
+-    output->cursor_y -= dy;
+-
+-    if (output->cursor_x < 0)
+-        output->cursor_x = 0;
+-    if (output->cursor_x > 1)
+-        output->cursor_x = 1;
+-
+-    if (output->cursor_y < 0)
+-        output->cursor_y = 0;
+-    if (output->cursor_y > 1)
+-        output->cursor_y = 1;
+-
+-    send_pointer_position(output, output->cursor_x, output->cursor_y, time_ms);
+-}
+-
+-void handle_touch_event(tgui_event *e, struct wlr_tgui_output *output, uint64_t time_ms) {
+-    switch (e->touch.action) {
+-    case TGUI_TOUCH_DOWN: {
+-        tgui_touch_pointer *p = &e->touch.pointers[e->touch.index][0];
+-        memset(&output->touch_pointer, 0, sizeof(output->touch_pointer));
+-        output->touch_pointer.id = p->id;
+-        output->touch_pointer.max = 0;
+-        output->touch_pointer.x = (double) p->x / output->wlr_output.width;
+-        output->touch_pointer.y = (double) p->y / output->wlr_output.height;
+-        output->touch_pointer.time_ms = time_ms;
+-        break;
+-    }
+-    case TGUI_TOUCH_UP:
+-    case TGUI_TOUCH_POINTER_UP: {
+-        tgui_touch_pointer *p = &e->touch.pointers[e->touch.index][0];
+-        if (p->id == output->touch_pointer.id) {
+-            if (time_ms - output->touch_pointer.time_ms < 200 &&
+-                output->touch_pointer.down == false && output->touch_pointer.moved == false) {
+-                if (output->touch_pointer.max > 1) {
+-                    send_pointer_button(output, BTN_RIGHT, WL_POINTER_BUTTON_STATE_PRESSED, time_ms++);
+-                    send_pointer_button(output, BTN_RIGHT, WL_POINTER_BUTTON_STATE_RELEASED, time_ms);
+-                } else {
+-                    send_pointer_button(output, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED, time_ms++);
+-                    output->touch_pointer.down = true;
+-                }
+-            }
+-            if (output->touch_pointer.down) {
+-                send_pointer_button(output, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED, time_ms);
+-                output->touch_pointer.down = false;
+-            }
+-        }
+-        break;
+-    }
+-    case TGUI_TOUCH_MOVE: {
+-        for (uint32_t i = 0u; i < e->touch.num_pointers; i++) {
+-            tgui_touch_pointer *p = &e->touch.pointers[0][i];
+-            if (p->id != output->touch_pointer.id) {
+-                break;
+-            }
+-            double x = (double) p->x / output->wlr_output.width;
+-            double y = (double) p->y / output->wlr_output.height;
+-            double px = (double) 1 / output->wlr_output.width;
+-            double py = (double) 1 / output->wlr_output.height;
+-            double dx = output->touch_pointer.x - x;
+-            double dy = output->touch_pointer.y - y;
+-            if (dx >= px || dx <= -px || dy >= py || dy <= -py) {
+-                output->touch_pointer.x -= dx;
+-                output->touch_pointer.y -= dy;
+-                output->touch_pointer.moved = true;
+-            }
+-            if (output->touch_pointer.moved == true && e->touch.num_pointers == 2) {
+-                static double s;
+-                s += dy;
+-                if (s > (double) 150 / output->wlr_output.height) {
+-                    send_pointer_axis(output, 1, time_ms);
+-                    s = 0;
+-                } else if (s < (double) -150 / output->wlr_output.height) {
+-                    send_pointer_axis(output, -1, time_ms);
+-                    s = 0;
+-                }
+-            } else if (output->touch_pointer.moved == false &&
+-                       output->touch_pointer.down == false &&
+-                       time_ms - output->touch_pointer.time_ms > 200) {
+-                send_pointer_button(output, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED, time_ms);
+-                output->touch_pointer.down = true;
+-            } else {
+-                move_cursor(output, dx, dy, time_ms);
+-            }
+-        }
+-        if (e->touch.num_pointers > (uint32_t) output->touch_pointer.max) {
+-            output->touch_pointer.max = e->touch.num_pointers;
+-        }
+-        break;
+-    }
+-    default: {
+-        break;
+-    }
+-    }
+-}
+-
+-static const struct {
+-    uint32_t android, linux, wlr_mod;
+-} keymap[] = {
+-    { AKEYCODE_0, KEY_0 },
+-    { AKEYCODE_1, KEY_1 },
+-    { AKEYCODE_2, KEY_2 },
+-    { AKEYCODE_3, KEY_3 },
+-    { AKEYCODE_4, KEY_4 },
+-    { AKEYCODE_5, KEY_5 },
+-    { AKEYCODE_6, KEY_6 },
+-    { AKEYCODE_7, KEY_7 },
+-    { AKEYCODE_8, KEY_8 },
+-    { AKEYCODE_9, KEY_9 },
+-    { AKEYCODE_A, KEY_A },
+-    { AKEYCODE_B, KEY_B },
+-    { AKEYCODE_C, KEY_C },
+-    { AKEYCODE_D, KEY_D },
+-    { AKEYCODE_E, KEY_E },
+-    { AKEYCODE_F, KEY_F },
+-    { AKEYCODE_G, KEY_G },
+-    { AKEYCODE_H, KEY_H },
+-    { AKEYCODE_I, KEY_I },
+-    { AKEYCODE_J, KEY_J },
+-    { AKEYCODE_K, KEY_K },
+-    { AKEYCODE_L, KEY_L },
+-    { AKEYCODE_M, KEY_M },
+-    { AKEYCODE_N, KEY_N },
+-    { AKEYCODE_O, KEY_O },
+-    { AKEYCODE_P, KEY_P },
+-    { AKEYCODE_Q, KEY_Q },
+-    { AKEYCODE_R, KEY_R },
+-    { AKEYCODE_S, KEY_S },
+-    { AKEYCODE_T, KEY_T },
+-    { AKEYCODE_U, KEY_U },
+-    { AKEYCODE_V, KEY_V },
+-    { AKEYCODE_W, KEY_W },
+-    { AKEYCODE_X, KEY_X },
+-    { AKEYCODE_Y, KEY_Y },
+-    { AKEYCODE_Z, KEY_Z },
+-    { AKEYCODE_ENTER, KEY_ENTER },
+-    { AKEYCODE_SPACE, KEY_SPACE },
+-    { AKEYCODE_DEL, KEY_BACKSPACE },
+-    { AKEYCODE_SHIFT_LEFT, KEY_LEFTSHIFT },
+-    { AKEYCODE_COMMA, KEY_COMMA },
+-    { AKEYCODE_PERIOD, KEY_DOT },
+-    { AKEYCODE_MINUS, KEY_MINUS },
+-    { AKEYCODE_AT, KEY_2, WLR_MODIFIER_SHIFT },
+-    { AKEYCODE_STAR, KEY_8, WLR_MODIFIER_SHIFT },
+-    { AKEYCODE_POUND, KEY_3, WLR_MODIFIER_SHIFT },
+-    { AKEYCODE_SEMICOLON, KEY_SEMICOLON },
+-    { AKEYCODE_APOSTROPHE, KEY_APOSTROPHE },
+-    { AKEYCODE_SLASH, KEY_SLASH },
+-    { AKEYCODE_EQUALS, KEY_EQUAL },
+-    { AKEYCODE_PLUS, KEY_EQUAL, WLR_MODIFIER_SHIFT },
+-    { AKEYCODE_GRAVE, KEY_GRAVE },
+-    { AKEYCODE_BACKSLASH, KEY_BACKSLASH },
+-    { AKEYCODE_LEFT_BRACKET, KEY_LEFTBRACE },
+-    { AKEYCODE_RIGHT_BRACKET, KEY_RIGHTBRACE },
+-};
+-
+-static bool get_keycode_and_modifier(uint32_t code, uint32_t *keycode, uint32_t *out_mod) {
+-    for (size_t i = 0; i < sizeof(keymap) / sizeof(*keymap); i++) {
+-        if (code == keymap[i].android) {
+-            *keycode = keymap[i].linux;
+-            *out_mod = keymap[i].wlr_mod;
+-            return true;
+-        }
+-    }
+-
+-    return false;
+-}
+-
+-void handle_keyboard_event(tgui_event *e, struct wlr_tgui_output *output, uint64_t time_ms) {
+-    uint32_t keycode, modifiers;
+-
+-    if (!get_keycode_and_modifier(e->key.code, &keycode, &modifiers)) {
+-        wlr_log(WLR_ERROR, "Unhandled keycode %d %c", e->key.code, e->key.codePoint);
+-        return;
+-    }
+-
+-    if (e->key.mod & (TGUI_MOD_LSHIFT | TGUI_MOD_RSHIFT))
+-        modifiers |= WLR_MODIFIER_SHIFT;
+-    if (e->key.mod & (TGUI_MOD_LCTRL | TGUI_MOD_RCTRL))
+-        modifiers |= WLR_MODIFIER_CTRL;
+-    if (e->key.mod & TGUI_MOD_ALT)
+-        modifiers |= WLR_MODIFIER_ALT;
+-
+-    xkb_layout_index_t group =
+-        xkb_state_key_get_layout(output->backend->keyboard.xkb_state, keycode + 8);
+-    wlr_keyboard_notify_modifiers(&output->backend->keyboard, modifiers, 0, 0, group);
+-
+-    struct wlr_keyboard_key_event key = {
+-        .time_msec = time_ms,
+-        .keycode = keycode,
+-        .state = e->key.down ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED,
+-        .update_state = true,
+-    };
+-    wlr_keyboard_notify_key(&output->backend->keyboard, &key);
+-}
+diff --git a/x11-packages/wlroots/src/backend/termuxgui/meson.build b/x11-packages/wlroots/src/backend/termuxgui/meson.build
+deleted file mode 100644
+index 23c2d126e3ee67..00000000000000
+--- a/x11-packages/wlroots/src/backend/termuxgui/meson.build
++++ /dev/null
+@@ -1,15 +0,0 @@
+-termuxgui = cc.find_library('termuxgui')
+-
+-if not termuxgui.found()
+-	subdir_done()
+-endif
+-
+-wlr_files += files(
+-	'backend.c',
+-	'output.c',
+-	'input.c',
+-	'allocator.c',
+-)
+-
+-wlr_deps += termuxgui
+-features += { 'termuxgui-backend': true }
+diff --git a/x11-packages/wlroots/src/backend/termuxgui/output.c b/x11-packages/wlroots/src/backend/termuxgui/output.c
+deleted file mode 100644
+index fa065bf11cdc50..00000000000000
+--- a/x11-packages/wlroots/src/backend/termuxgui/output.c
++++ /dev/null
+@@ -1,308 +0,0 @@
+-#include <assert.h>
+-#include <drm_fourcc.h>
+-#include <pthread.h>
+-#include <stdlib.h>
+-#include <sys/eventfd.h>
+-#include <unistd.h>
+-
+-#include "backend/termuxgui.h"
+-#include "util/time.h"
+-#include "wlr/render/swapchain.h"
+-
+-static const uint32_t SUPPORTED_OUTPUT_STATE =
+-    WLR_OUTPUT_STATE_BACKEND_OPTIONAL | WLR_OUTPUT_STATE_BUFFER | WLR_OUTPUT_STATE_ENABLED |
+-    WLR_OUTPUT_STATE_MODE | WLR_OUTPUT_STATE_ADAPTIVE_SYNC_ENABLED;
+-
+-static size_t last_output_num = 0;
+-
+-static struct wlr_tgui_output *tgui_output_from_output(struct wlr_output *wlr_output) {
+-    assert(wlr_output_is_tgui(wlr_output));
+-    return (struct wlr_tgui_output *) wlr_output;
+-}
+-
+-static bool output_test(struct wlr_output *wlr_output, const struct wlr_output_state *state) {
+-    uint32_t unsupported = state->committed & ~SUPPORTED_OUTPUT_STATE;
+-    if (unsupported != 0) {
+-        wlr_log(WLR_DEBUG, "Unsupported output state fields: 0x%" PRIx32, unsupported);
+-        return false;
+-    }
+-
+-    if (state->committed & WLR_OUTPUT_STATE_MODE) {
+-        assert(state->mode_type == WLR_OUTPUT_STATE_MODE_CUSTOM);
+-    }
+-
+-    if (state->committed & WLR_OUTPUT_STATE_LAYERS) {
+-        for (size_t i = 0; i < state->layers_len; i++) {
+-            state->layers[i].accepted = true;
+-        }
+-    }
+-
+-    return true;
+-}
+-
+-static bool output_commit(struct wlr_output *wlr_output, const struct wlr_output_state *state) {
+-    struct wlr_tgui_output *output = tgui_output_from_output(wlr_output);
+-
+-    if (!output_test(wlr_output, state)) {
+-        return false;
+-    }
+-
+-    if (state->committed & WLR_OUTPUT_STATE_BUFFER) {
+-        struct wlr_tgui_buffer *buffer = tgui_buffer_from_buffer(state->buffer);
+-        wlr_buffer_lock(&buffer->wlr_buffer);
+-        wlr_queue_push(&output->present_queue, &buffer->link);
+-    }
+-
+-    return true;
+-}
+-
+-static void output_destroy(struct wlr_output *wlr_output) {
+-    struct wlr_tgui_output *output = tgui_output_from_output(wlr_output);
+-    output->present_thread_run = false;
+-
+-    wl_list_remove(&output->link);
+-    wl_event_source_remove(output->present_complete_source);
+-    close(output->present_complete_fd);
+-
+-    tgui_activity_finish(output->backend->conn, output->activity);
+-
+-    struct wl_list tmp_buffer, *tmp;
+-    wlr_queue_push(&output->present_queue, &tmp_buffer);
+-    pthread_join(output->present_thread, NULL);
+-
+-    while ((tmp = wlr_queue_pull(&output->present_queue, true)) != NULL) {
+-        if (tmp == &tmp_buffer) {
+-            continue;
+-        }
+-        struct wlr_tgui_buffer *buf = wl_container_of(tmp, buf, link);
+-        wlr_buffer_unlock(&buf->wlr_buffer);
+-    }
+-    while ((tmp = wlr_queue_pull(&output->idle_queue, true)) != NULL) {
+-        if (tmp == &tmp_buffer) {
+-            continue;
+-        }
+-        struct wlr_tgui_buffer *buf = wl_container_of(tmp, buf, link);
+-        wlr_buffer_unlock(&buf->wlr_buffer);
+-    }
+-
+-    wlr_queue_destroy(&output->present_queue);
+-    wlr_queue_destroy(&output->idle_queue);
+-    free(output);
+-}
+-
+-static const struct wlr_output_impl output_impl = {
+-    .destroy = output_destroy,
+-    .commit = output_commit,
+-};
+-
+-bool wlr_output_is_tgui(struct wlr_output *wlr_output) {
+-    return wlr_output->impl == &output_impl;
+-}
+-
+-static void output_create_tgui_surface(struct wlr_tgui_output *output) {
+-    TRY_LOG(tgui_activity_set_orientation, output->backend->conn, output->activity,
+-            TGUI_ORIENTATION_LANDSCAPE);
+-    TRY_LOG(tgui_activity_configure_insets, output->backend->conn, output->activity,
+-            TGUI_INSET_NAVIGATION_BAR, TGUI_INSET_BEHAVIOUR_TRANSIENT);
+-    TRY_LOG(tgui_create_surface_view, output->backend->conn, output->activity, &output->surface,
+-            NULL, TGUI_VIS_VISIBLE, true);
+-    TRY_LOG(tgui_surface_view_config, output->backend->conn, output->activity, output->surface, 0,
+-            TGUI_MISMATCH_STICK_TOPLEFT, TGUI_MISMATCH_STICK_TOPLEFT, 0);
+-    TRY_LOG(tgui_send_touch_event, output->backend->conn, output->activity, output->surface,
+-            true);
+-    TRY_LOG(tgui_focus, output->backend->conn, output->activity, output->surface, false);
+-}
+-
+-int handle_activity_event(tgui_event *e, struct wlr_tgui_output *output) {
+-    uint64_t time_ms = get_current_time_msec();
+-    switch (e->type) {
+-    case TGUI_EVENT_CREATE: {
+-        output_create_tgui_surface(output);
+-        break;
+-    }
+-    case TGUI_EVENT_START:
+-    case TGUI_EVENT_RESUME: {
+-        output->foreground = true;
+-        break;
+-    }
+-    case TGUI_EVENT_PAUSE: {
+-        output->foreground = false;
+-        break;
+-    }
+-    case TGUI_EVENT_DESTROY: {
+-        wlr_output_destroy(&output->wlr_output);
+-        break;
+-    }
+-    case TGUI_EVENT_KEY: {
+-        if (e->key.code == 4 /* back */) {
+-            tgui_focus(output->backend->conn, output->activity, output->surface, true);
+-        } else {
+-            handle_keyboard_event(e, output, time_ms);
+-        }
+-        break;
+-    }
+-    case TGUI_EVENT_TOUCH: {
+-        handle_touch_event(e, output, time_ms);
+-        break;
+-    }
+-    case TGUI_EVENT_SURFACE_CHANGED: {
+-        struct wlr_output_state state;
+-        wlr_output_state_init(&state);
+-        wlr_output_state_set_custom_mode(&state, e->surfaceChanged.width,
+-                                         e->surfaceChanged.height, DEFAULT_REFRESH);
+-        wlr_output_send_request_state(&output->wlr_output, &state);
+-        wlr_output_state_finish(&state);
+-
+-        struct wlr_pointer_motion_absolute_event ev = {
+-            .pointer = &output->backend->pointer,
+-            .time_msec = time_ms,
+-            .x = output->cursor_x = 0.5f,
+-            .y = output->cursor_y = 0.5f,
+-        };
+-        wl_signal_emit_mutable(&output->backend->pointer.events.motion_absolute, &ev);
+-        wl_signal_emit_mutable(&output->backend->pointer.events.frame, &output->backend->pointer);
+-        break;
+-    }
+-    case TGUI_EVENT_FRAME_COMPLETE: {
+-        bool redraw = false;
+-
+-        if (wlr_queue_length(&output->idle_queue) > 0) {
+-            struct wl_list *elm = wlr_queue_pull(&output->idle_queue, true);
+-            struct wlr_tgui_buffer *buf = wl_container_of(elm, buf, link);
+-            wlr_buffer_unlock(&buf->wlr_buffer);
+-            redraw = true;
+-        } else if (wlr_queue_length(&output->present_queue) < WLR_SWAPCHAIN_CAP - 1) {
+-            redraw = true;
+-        }
+-
+-        if (redraw) {
+-            wlr_output_send_frame(&output->wlr_output);
+-        }
+-        break;
+-    }
+-    default:
+-        break;
+-    }
+-
+-    return 0;
+-}
+-
+-static void *present_queue_thread(void *data) {
+-    struct wlr_tgui_output *output = data;
+-    output->present_thread_run = true;
+-
+-    while (output->present_thread_run) {
+-        struct wl_list *elm = wlr_queue_pull(&output->present_queue, false);
+-        struct wlr_tgui_buffer *buffer = wl_container_of(elm, buffer, link);
+-
+-        if (!output->present_thread_run) {
+-            wlr_queue_push(&output->idle_queue, &buffer->link);
+-            break;
+-        }
+-
+-        if (output->foreground) {
+-            TRY_LOG(tgui_surface_view_set_buffer, output->backend->conn, output->activity,
+-                    output->surface, &buffer->buffer);
+-        } else {
+-            usleep(1000000000 / DEFAULT_REFRESH);
+-        }
+-
+-        wlr_queue_push(&output->idle_queue, &buffer->link);
+-
+-        eventfd_write(output->present_complete_fd, 1);
+-    }
+-
+-    return 0;
+-}
+-
+-static int present_complete(int fd, uint32_t mask, void *data) {
+-    struct wlr_tgui_output *output = data;
+-
+-    if ((mask & WL_EVENT_HANGUP) || (mask & WL_EVENT_ERROR)) {
+-        if (mask & WL_EVENT_ERROR) {
+-            wlr_log(WLR_ERROR, "Failed to read from idle event");
+-        }
+-        return 0;
+-    }
+-
+-    eventfd_t count = 0;
+-    if (eventfd_read(fd, &count) < 0) {
+-        return 0;
+-    }
+-
+-    struct timespec t;
+-    clock_gettime(CLOCK_MONOTONIC, &t);
+-
+-    struct wlr_output_event_present present_event = {
+-        .output = &output->wlr_output,
+-        .commit_seq = output->wlr_output.commit_seq + 1,
+-        .presented = true,
+-        .when = &t,
+-        .flags = WLR_OUTPUT_PRESENT_ZERO_COPY,
+-    };
+-    wlr_output_send_present(&output->wlr_output, &present_event);
+-    return 0;
+-}
+-
+-struct wlr_output *wlr_tgui_output_create(struct wlr_backend *wlr_backend) {
+-    struct wlr_tgui_backend *backend = tgui_backend_from_backend(wlr_backend);
+-
+-    if (!backend->started) {
+-        ++backend->requested_outputs;
+-        return NULL;
+-    }
+-
+-    struct wlr_tgui_output *output = calloc(1, sizeof(*output));
+-    if (output == NULL) {
+-        wlr_log(WLR_ERROR, "Failed to allocate wlr_tgui_output");
+-        return NULL;
+-    }
+-    output->backend = backend;
+-
+-    if (tgui_activity_create(backend->conn, &output->activity, TGUI_ACTIVITY_NORMAL, NULL,
+-                             true)) {
+-        wlr_log(WLR_ERROR, "Failed to create tgui_activity");
+-        free(output);
+-        return NULL;
+-    }
+-    struct wlr_output_state state;
+-    wlr_output_state_init(&state);
+-    wlr_output_state_set_render_format(&state, DRM_FORMAT_ABGR8888);
+-    wlr_output_state_set_transform(&state, WL_OUTPUT_TRANSFORM_FLIPPED_180);
+-    wlr_output_state_set_custom_mode(&state, 1920, 1080, DEFAULT_REFRESH);
+-    wlr_output_init(&output->wlr_output, &backend->backend, &output_impl, backend->loop,
+-                    &state);
+-    wlr_output_state_finish(&state);
+-
+-    struct wlr_output *wlr_output = &output->wlr_output;
+-    wlr_output->adaptive_sync_status = WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED;
+-    wlr_output_lock_attach_render(wlr_output, true);
+-
+-    size_t output_num = ++last_output_num;
+-
+-    char name[64];
+-    snprintf(name, sizeof(name), "TGUI-%zu", output_num);
+-    wlr_output_set_name(wlr_output, name);
+-    tgui_activity_set_task_description(output->backend->conn, output->activity, NULL, 0, name);
+-
+-    char description[128];
+-    snprintf(description, sizeof(description), "Termux:GUI output %zu", output_num);
+-    wlr_output_set_description(wlr_output, description);
+-
+-    uint32_t events = WL_EVENT_READABLE | WL_EVENT_ERROR | WL_EVENT_HANGUP;
+-    output->present_complete_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE);
+-    output->present_complete_source = wl_event_loop_add_fd(
+-        backend->loop, output->present_complete_fd, events, present_complete, output);
+-
+-    assert(output->present_complete_fd >= 0 && output->present_complete_source != NULL);
+-
+-    wlr_queue_init(&output->present_queue);
+-    wlr_queue_init(&output->idle_queue);
+-
+-    pthread_create(&output->present_thread, NULL, present_queue_thread, output);
+-
+-    wl_signal_emit_mutable(&backend->backend.events.new_output, wlr_output);
+-
+-    wl_list_insert(&backend->outputs, &output->link);
+-    return wlr_output;
+-}
+diff --git a/x11-packages/wlroots/src/include/backend/termuxgui.h b/x11-packages/wlroots/src/include/backend/termuxgui.h
+deleted file mode 100644
+index 741652a6961345..00000000000000
+--- a/x11-packages/wlroots/src/include/backend/termuxgui.h
++++ /dev/null
+@@ -1,210 +0,0 @@
+-#ifndef BACKEND_TERMUXGUI_H
+-#define BACKEND_TERMUXGUI_H
+-
+-#include <android/hardware_buffer.h>
+-#include <assert.h>
+-#include <pthread.h>
+-#include <termuxgui/termuxgui.h>
+-
+-#include <wlr/backend/interface.h>
+-#include <wlr/backend/termuxgui.h>
+-#include <wlr/interfaces/wlr_buffer.h>
+-#include <wlr/interfaces/wlr_keyboard.h>
+-#include <wlr/interfaces/wlr_output.h>
+-#include <wlr/interfaces/wlr_pointer.h>
+-#include <wlr/render/allocator.h>
+-#include <wlr/types/wlr_output_layer.h>
+-#include <wlr/util/log.h>
+-
+-#define DEFAULT_REFRESH (60 * 1000) // 60 Hz
+-
+-#define TRY_LOG(func, ...)                                                                       \
+-    do {                                                                                         \
+-        tgui_err ret = func(__VA_ARGS__);                                                        \
+-        if (ret != TGUI_ERR_OK) {                                                                \
+-            wlr_log(WLR_ERROR, #func " failed: %s", TGUI_ERR_TO_STR(ret));                       \
+-        }                                                                                        \
+-    } while (0)
+-
+-static const char *TGUI_ERR_STR[] = {
+-    [TGUI_ERR_SYSTEM] = "TGUI_ERR_SYSTEM",
+-    [TGUI_ERR_CONNECTION_LOST] = "TGUI_ERR_CONNECTION_LOST",
+-    [TGUI_ERR_ACTIVITY_DESTROYED] = "TGUI_ERR_ACTIVITY_DESTROYED",
+-    [TGUI_ERR_MESSAGE] = "TGUI_ERR_MESSAGE",
+-    [TGUI_ERR_NOMEM] = "TGUI_ERR_NOMEM",
+-    [TGUI_ERR_EXCEPTION] = "TGUI_ERR_EXCEPTION",
+-    [TGUI_ERR_VIEW_INVALID] = "TGUI_ERR_VIEW_INVALID",
+-    [TGUI_ERR_API_LEVEL] = "TGUI_ERR_API_LEVEL",
+-};
+-
+-static inline const char *TGUI_ERR_TO_STR(tgui_err err) {
+-    if (err > TGUI_ERR_API_LEVEL) {
+-        return "TGUI_ERR_UNKNOWN";
+-    }
+-    return TGUI_ERR_STR[err];
+-}
+-
+-typedef struct native_handle {
+-    int version; /* sizeof(native_handle_t) */
+-    int numFds;  /* number of file-descriptors at &data[0] */
+-    int numInts; /* number of ints at &data[numFds] */
+-#if defined(__clang__)
+-#pragma clang diagnostic push
+-#pragma clang diagnostic ignored "-Wzero-length-array"
+-#endif
+-    int data[0]; /* numFds + numInts ints */
+-#if defined(__clang__)
+-#pragma clang diagnostic pop
+-#endif
+-} native_handle_t;
+-
+-struct wlr_queue {
+-    struct wl_list base;
+-    int length;
+-    pthread_cond_t cond;
+-    pthread_mutex_t mutex;
+-};
+-
+-static inline void wlr_queue_init(struct wlr_queue *queue) {
+-    queue->length = 0;
+-    wl_list_init(&queue->base);
+-    pthread_cond_init(&queue->cond, NULL);
+-    pthread_mutex_init(&queue->mutex, NULL);
+-}
+-
+-static inline void wlr_queue_destroy(struct wlr_queue *queue) {
+-    pthread_cond_destroy(&queue->cond);
+-    pthread_mutex_destroy(&queue->mutex);
+-}
+-
+-static inline struct wl_list *wlr_queue_pull(struct wlr_queue *queue, bool nonblock) {
+-    pthread_mutex_lock(&queue->mutex);
+-
+-    if (queue->length == 0) {
+-        if (nonblock) {
+-            pthread_mutex_unlock(&queue->mutex);
+-            return NULL;
+-        }
+-        pthread_cond_wait(&queue->cond, &queue->mutex);
+-    }
+-    assert(queue->length > 0);
+-
+-    queue->length--;
+-    struct wl_list *elm = queue->base.prev;
+-    wl_list_remove(elm);
+-
+-    pthread_mutex_unlock(&queue->mutex);
+-    return elm;
+-}
+-
+-static inline void wlr_queue_push(struct wlr_queue *queue, struct wl_list *elm) {
+-    pthread_mutex_lock(&queue->mutex);
+-    if (wl_list_empty(&queue->base)) {
+-        pthread_cond_signal(&queue->cond);
+-    }
+-    queue->length++;
+-    wl_list_insert(&queue->base, elm);
+-    pthread_mutex_unlock(&queue->mutex);
+-}
+-
+-static inline int wlr_queue_length(struct wlr_queue *queue) {
+-    pthread_mutex_lock(&queue->mutex);
+-    int ret = queue->length;
+-    pthread_mutex_unlock(&queue->mutex);
+-    return ret;
+-}
+-
+-struct wlr_tgui_backend {
+-    struct wlr_backend backend;
+-    struct wl_event_loop *loop;
+-    struct wlr_allocator *allocator;
+-
+-    struct wlr_pointer pointer;
+-    struct wlr_keyboard keyboard;
+-
+-    size_t requested_outputs;
+-    struct wl_list outputs;
+-    struct wl_listener event_loop_destroy;
+-    bool started;
+-
+-    tgui_connection conn;
+-    struct wlr_queue event_queue;
+-    int tgui_event_fd;
+-    pthread_t tgui_event_thread;
+-    struct wl_event_source *tgui_event_source;
+-};
+-
+-struct wlr_tgui_allocator {
+-    struct wlr_allocator wlr_allocator;
+-    tgui_connection conn;
+-};
+-
+-struct wlr_tgui_buffer {
+-    struct wlr_buffer wlr_buffer;
+-
+-    void *data;
+-    uint32_t format;
+-    tgui_connection conn;
+-    tgui_hardware_buffer buffer;
+-    AHardwareBuffer_Desc desc;
+-    struct wl_list link;
+-    struct wlr_dmabuf_attributes dmabuf;
+-
+-    void *dlhandle;
+-    int (*lock)(AHardwareBuffer *buffer,
+-                uint64_t usage,
+-                int32_t fence,
+-                const ARect *rect,
+-                void **outVirtualAddress);
+-    int (*unlock)(AHardwareBuffer *buffer, int32_t *fence);
+-    void (*describe)(const AHardwareBuffer *buffer, AHardwareBuffer_Desc *outDesc);
+-    const native_handle_t *(*getNativeHandle)(const AHardwareBuffer *buffer);
+-};
+-
+-struct wlr_tgui_output {
+-    struct wlr_output wlr_output;
+-
+-    struct wlr_tgui_backend *backend;
+-    struct wl_list link;
+-
+-    tgui_activity activity;
+-    tgui_view surface;
+-    bool foreground;
+-
+-    struct wlr_queue present_queue;
+-    struct wlr_queue idle_queue;
+-    bool present_thread_run;
+-    pthread_t present_thread;
+-    int present_complete_fd;
+-    struct wl_event_source *present_complete_source;
+-
+-    struct {
+-        int id, max;
+-        double x, y;
+-        bool moved, down;
+-        uint64_t time_ms;
+-    } touch_pointer;
+-
+-    double cursor_x, cursor_y;
+-};
+-
+-struct wlr_tgui_event {
+-    tgui_event e;
+-    struct wl_list link;
+-};
+-
+-struct wlr_tgui_backend *tgui_backend_from_backend(struct wlr_backend *wlr_backend);
+-
+-struct wlr_allocator *wlr_tgui_allocator_create(struct wlr_tgui_backend *backend);
+-
+-struct wlr_allocator *wlr_tgui_backend_get_allocator(struct wlr_tgui_backend *backend);
+-
+-struct wlr_tgui_buffer *tgui_buffer_from_buffer(struct wlr_buffer *wlr_buffer);
+-
+-int handle_activity_event(tgui_event *e, struct wlr_tgui_output *output);
+-
+-void handle_touch_event(tgui_event *e, struct wlr_tgui_output *output, uint64_t time_ms);
+-
+-void handle_keyboard_event(tgui_event *e, struct wlr_tgui_output *output, uint64_t time_ms);
+-
+-#endif
+diff --git a/x11-packages/wlroots/src/include/wlr/backend/termuxgui.h b/x11-packages/wlroots/src/include/wlr/backend/termuxgui.h
+deleted file mode 100644
+index 52a92f63e497dc..00000000000000
+--- a/x11-packages/wlroots/src/include/wlr/backend/termuxgui.h
++++ /dev/null
+@@ -1,31 +0,0 @@
+-/*
+- * This an unstable interface of wlroots. No guarantees are made regarding the
+- * future consistency of this API.
+- */
+-#ifndef WLR_USE_UNSTABLE
+-#error "Add -DWLR_USE_UNSTABLE to enable unstable wlroots features"
+-#endif
+-
+-#ifndef WLR_BACKEND_TERMUXGUI_H
+-#define WLR_BACKEND_TERMUXGUI_H
+-
+-#include <wlr/backend.h>
+-#include <wlr/types/wlr_output.h>
+-
+-/**
+- * Creates a Termux:GUI backend, and connection to the Termux:GUI plugin.
+- * A Termux:GUI backend has no outputs or inputs by default.
+- */
+-struct wlr_backend *wlr_tgui_backend_create(struct wl_event_loop *loop);
+-/**
+- * Create a new Termux:GUI output.
+- *
+- * Will use Termux:GUI plugin to create Activity and SurfaceView, the buffers presented
+- * on the output is displayed to the SurfaceView.
+- */
+-struct wlr_output *wlr_tgui_output_create(struct wlr_backend *backend);
+-
+-bool wlr_backend_is_tgui(struct wlr_backend *backend);
+-bool wlr_output_is_tgui(struct wlr_output *output);
+-
+-#endif
